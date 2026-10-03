@@ -1,0 +1,14 @@
+{
+  "name": "heirloom-protocol",
+  "version": "1.0.0",
+  "description": "Trust-Minimized Digital Inheritance Protocol",
+  "private": true,
+  "scripts": {
+    "dev": "cd client && npm run dev",
+    "dev:server": "cd server && npm start",
+    "test:contracts": "cd contracts && npx hardhat test",
+    "test:crypto": "cd server && node scripts/testCrypto.js",
+    "test:e2e": "cd server && npm run test:e2e",
+    "build": "cd client && npm run build"
+  }
+}

@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+*/node_modules/
+*/*/node_modules/
+
+# Environment files & Secrets (Strictly Ignored)
+.env
+.env.*
+!.env.example
+*.env
+*/.env
+*/.env.*
+!*/.env.example
+*/*/.env
+*/*/.env.*
+!*/*/.env.example
+
+# Operating System files
+.DS_Store
+*/.DS_Store
+*/*/.DS_Store
+Thumbs.db
+
+# Hardhat build cache & artifacts
+contracts/artifacts/
+contracts/cache/
+contracts/typechain-types/
+
+# Client build output
+client/dist/
+client/dist-ssr/
+dist/
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor directories
+.idea/
+.vscode/
+*.swp
+*.swo
