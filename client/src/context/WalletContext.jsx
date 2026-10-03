@@ -14,8 +14,25 @@ export const WalletContext = createContext({
   error: null,
 });
 
-// Supported networks: Hardhat local (31337 / 1337) and Sepolia testnet (11155111)
-const SUPPORTED_CHAIN_IDS = [31337, 1337, 11155111];
+// Hex definitions for supported networks
+const SEPOLIA_HEX = '0xaa36a7';
+const HARDHAT_HEX = '0x7a69';
+const LOCALHOST_HEX = '0x539';
+
+// Decimal IDs: Sepolia 11155111, Hardhat 31337, Localhost 1337
+const SUPPORTED_CHAIN_IDS = [11155111, 31337, 1337];
+
+const SEPOLIA_NETWORK_PARAMS = {
+  chainId: SEPOLIA_HEX,
+  chainName: 'Sepolia Test Network',
+  nativeCurrency: {
+    name: 'Sepolia ETH',
+    symbol: 'ETH',
+    decimals: 18,
+  },
+  rpcUrls: ['https://ethereum-sepolia-rpc.publicnode.com'],
+  blockExplorerUrls: ['https://sepolia.etherscan.io'],
+};
 
 export const WalletProvider = ({ children }) => {
   const [account, setAccount] = useState(null);
@@ -33,7 +50,59 @@ export const WalletProvider = ({ children }) => {
 
   const isConnected = Boolean(account);
   const numericChainId = normalizeChainId(chainId);
-  const isCorrectNetwork = !isConnected || !numericChainId || SUPPORTED_CHAIN_IDS.includes(numericChainId);
+  const isCorrectNetwork =
+    !isConnected ||
+    !numericChainId ||
+    SUPPORTED_CHAIN_IDS.includes(numericChainId);
+
+  // EIP-3085 / EIP-3326 Automatic Network Switcher & On-Demand Adder
+  const ensureCorrectNetwork = useCallback(async () => {
+    if (typeof window === 'undefined' || !window.ethereum) return;
+
+    try {
+      const currentChainHex = await window.ethereum.request({
+        method: 'eth_chainId',
+      });
+      const normalizedHex = currentChainHex ? currentChainHex.toLowerCase() : '';
+
+      // If already on Sepolia or local testnet, no switch needed
+      if (
+        normalizedHex === SEPOLIA_HEX ||
+        normalizedHex === HARDHAT_HEX ||
+        normalizedHex === LOCALHOST_HEX
+      ) {
+        return;
+      }
+
+      console.log(
+        `[WalletContext] Unsupported chain detected (${currentChainHex}). Prompting auto-switch to Sepolia...`
+      );
+
+      try {
+        await window.ethereum.request({
+          method: 'wallet_switchEthereumChain',
+          params: [{ chainId: SEPOLIA_HEX }],
+        });
+      } catch (switchError) {
+        // Error code 4902 indicates that the chain has not been added to MetaMask
+        if (
+          switchError.code === 4902 ||
+          switchError.message?.includes('4902') ||
+          switchError.message?.includes('Unrecognized chain')
+        ) {
+          console.log('[WalletContext] Sepolia not found in wallet. Auto-adding network via wallet_addEthereumChain...');
+          await window.ethereum.request({
+            method: 'wallet_addEthereumChain',
+            params: [SEPOLIA_NETWORK_PARAMS],
+          });
+        } else {
+          throw switchError;
+        }
+      }
+    } catch (err) {
+      console.warn('[WalletContext] Automatic network switch error:', err.message);
+    }
+  }, []);
 
   // Sync state from active Ethereum provider
   const syncWalletState = useCallback(async () => {
@@ -47,13 +116,19 @@ export const WalletProvider = ({ children }) => {
       const accounts = await window.ethereum.request({ method: 'eth_accounts' });
 
       setProvider(browserProvider);
-      setChainId(Number(network.chainId));
+      const currentNumChainId = Number(network.chainId);
+      setChainId(currentNumChainId);
 
       if (accounts && accounts.length > 0) {
         const lowerAccount = accounts[0].toLowerCase();
         setAccount(lowerAccount);
         const userSigner = await browserProvider.getSigner();
         setSigner(userSigner);
+
+        // Auto verify and switch network if wallet is connected to an unsupported chain
+        if (!SUPPORTED_CHAIN_IDS.includes(currentNumChainId)) {
+          await ensureCorrectNetwork();
+        }
       } else {
         setAccount(null);
         setSigner(null);
@@ -62,12 +137,14 @@ export const WalletProvider = ({ children }) => {
     } catch (err) {
       console.warn('[WalletContext] Failed to sync wallet state:', err);
     }
-  }, []);
+  }, [ensureCorrectNetwork]);
 
   // Connect wallet action
   const connectWallet = useCallback(async () => {
     if (typeof window === 'undefined' || !window.ethereum) {
-      const err = new Error('No Ethereum wallet detected. Please install MetaMask or another Web3 wallet.');
+      const err = new Error(
+        'No Ethereum wallet detected. Please install MetaMask or another Web3 wallet.'
+      );
       setError(err.message);
       throw err;
     }
@@ -85,12 +162,18 @@ export const WalletProvider = ({ children }) => {
       const lowerAccount = accounts[0].toLowerCase();
       const browserProvider = new ethers.BrowserProvider(window.ethereum);
       const network = await browserProvider.getNetwork();
+      const currentNumChainId = Number(network.chainId);
       const userSigner = await browserProvider.getSigner();
 
       setAccount(lowerAccount);
-      setChainId(Number(network.chainId));
+      setChainId(currentNumChainId);
       setProvider(browserProvider);
       setSigner(userSigner);
+
+      // Automatically switch network to Sepolia if unsupported
+      if (!SUPPORTED_CHAIN_IDS.includes(currentNumChainId)) {
+        await ensureCorrectNetwork();
+      }
 
       return lowerAccount;
     } catch (err) {
@@ -98,7 +181,7 @@ export const WalletProvider = ({ children }) => {
       setError(err.message || 'Failed to connect wallet');
       throw err;
     }
-  }, []);
+  }, [ensureCorrectNetwork]);
 
   // Disconnect wallet action
   const disconnectWallet = useCallback(() => {
@@ -108,18 +191,28 @@ export const WalletProvider = ({ children }) => {
   }, []);
 
   // Switch network helper
-  const switchNetwork = useCallback(async (targetChainIdHex = '0x7a69') => {
-    if (typeof window === 'undefined' || !window.ethereum) return;
-    try {
-      await window.ethereum.request({
-        method: 'wallet_switchEthereumChain',
-        params: [{ chainId: targetChainIdHex }],
-      });
-    } catch (err) {
-      console.error('[WalletContext] Network switch error:', err);
-      throw err;
-    }
-  }, []);
+  const switchNetwork = useCallback(
+    async (targetChainIdHex = SEPOLIA_HEX) => {
+      if (typeof window === 'undefined' || !window.ethereum) return;
+      try {
+        await window.ethereum.request({
+          method: 'wallet_switchEthereumChain',
+          params: [{ chainId: targetChainIdHex }],
+        });
+      } catch (err) {
+        if (err.code === 4902 && targetChainIdHex === SEPOLIA_HEX) {
+          await window.ethereum.request({
+            method: 'wallet_addEthereumChain',
+            params: [SEPOLIA_NETWORK_PARAMS],
+          });
+        } else {
+          console.error('[WalletContext] Network switch error:', err);
+          throw err;
+        }
+      }
+    },
+    []
+  );
 
   // Listen to provider events
   useEffect(() => {
@@ -146,8 +239,12 @@ export const WalletProvider = ({ children }) => {
       }
     };
 
-    const handleChainChanged = (newChainId) => {
-      setChainId(normalizeChainId(newChainId));
+    const handleChainChanged = async (newChainId) => {
+      const parsedChainId = normalizeChainId(newChainId);
+      setChainId(parsedChainId);
+      if (!SUPPORTED_CHAIN_IDS.includes(parsedChainId)) {
+        await ensureCorrectNetwork();
+      }
       syncWalletState();
     };
 
@@ -160,7 +257,7 @@ export const WalletProvider = ({ children }) => {
         window.ethereum.removeListener('chainChanged', handleChainChanged);
       }
     };
-  }, [syncWalletState]);
+  }, [syncWalletState, ensureCorrectNetwork]);
 
   return (
     <WalletContext.Provider
@@ -174,6 +271,7 @@ export const WalletProvider = ({ children }) => {
         connectWallet,
         disconnectWallet,
         switchNetwork,
+        ensureCorrectNetwork,
         error,
       }}
     >

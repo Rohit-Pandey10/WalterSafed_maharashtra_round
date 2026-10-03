@@ -10,7 +10,7 @@ import Toast from "./components/Toast";
 import VaultCard from "./components/VaultCard";
 import { useWallet } from "./context/WalletContext.jsx";
 import { useHeirloomVault } from "./hooks/useHeirloomVault.js";
-import { useDashboardData, FALLBACK_DEMO_ADDRESS } from "./hooks/useDashboardData.js";
+import { useDashboardData } from "./hooks/useDashboardData.js";
 
 const roles = ["Owner", "Guardian", "Beneficiary"];
 const statuses = [
@@ -36,10 +36,67 @@ const apiRequest = async (method, path, body = null) => {
   throw lastErr;
 };
 
+const formatVaultItem = (v, currentAddr, forcedRole = null) => {
+  let role = forcedRole;
+  if (!role) {
+    const lowerOwner = (v.ownerAddress || "").toLowerCase();
+    const lowerBeneficiary = (v.beneficiaryAddress || "").toLowerCase();
+    const lowerGuardians = (v.guardians || []).map((g) =>
+      typeof g === "string" ? g.toLowerCase() : ""
+    );
+    const lowerCurr = currentAddr.toLowerCase();
+
+    if (lowerOwner === lowerCurr) {
+      role = "Owner";
+    } else if (lowerBeneficiary === lowerCurr) {
+      role = "Beneficiary";
+    } else if (lowerGuardians.includes(lowerCurr)) {
+      role = "Guardian";
+    } else {
+      role = "Owner";
+    }
+  }
+
+  return {
+    id: `HLM-${v.vaultId || v._id}`,
+    numericId: v.vaultId,
+    title: v.title || "Inheritance Vault",
+    description: v.description || "",
+    role: role,
+    status: v.status || "Active",
+    owner: v.ownerAddress,
+    beneficiary: v.beneficiaryAddress,
+    lastKnownHeartbeat:
+      v.lastKnownHeartbeat || v.createdAt || new Date().toISOString(),
+    heartbeatInterval: v.heartbeatInterval || 180,
+    guardians: (v.guardians || []).map((addr) => ({
+      address: addr,
+      hasApproved: v.status === "Approved" || v.status === "Claimed",
+    })),
+    quorum: v.guardianThreshold || 1,
+    ipfsCid: v.ipfsHash,
+    secretPayload: "",
+  };
+};
+
 export default function App() {
-  const { account, isConnected, chainId, isCorrectNetwork, connectWallet, disconnectWallet } = useWallet();
-  const { pingHeartbeat, attestVault, claimVault, isTransacting } = useHeirloomVault();
-  const { data: dashboardData, refresh: refreshDashboard, loading: dashboardLoading, activeAddress } = useDashboardData();
+  const {
+    account,
+    isConnected,
+    chainId,
+    isCorrectNetwork,
+    connectWallet,
+    disconnectWallet,
+  } = useWallet();
+  const { pingHeartbeat, attestVault, claimVault, isTransacting } =
+    useHeirloomVault();
+  const {
+    data: dashboardData,
+    allVaults,
+    refresh: refreshDashboard,
+    loading: dashboardLoading,
+    activeAddress,
+  } = useDashboardData();
 
   const [vaults, setVaults] = useState([]);
   const [filter, setFilter] = useState("all");
@@ -50,7 +107,10 @@ export default function App() {
   const notify = (message, type = "confirmed") => {
     const id = Date.now();
     setToast({ id, message, type });
-    window.setTimeout(() => setToast((current) => (current?.id === id ? null : current)), 3200);
+    window.setTimeout(
+      () => setToast((current) => (current?.id === id ? null : current)),
+      3200
+    );
   };
 
   // Convert real MongoDB records from dashboardData into UI Vault items
@@ -61,68 +121,20 @@ export default function App() {
 
       // 1. Owned Vaults
       (dashboardData.ownedVaults || []).forEach((v) => {
-        liveList.push({
-          id: `HLM-${v.vaultId || v._id}`,
-          numericId: v.vaultId,
-          title: v.title || "Inheritance Vault",
-          description: v.description || "",
-          role: "Owner",
-          status: v.status || "Active",
-          owner: v.ownerAddress,
-          beneficiary: v.beneficiaryAddress,
-          lastKnownHeartbeat: v.lastKnownHeartbeat || v.createdAt || new Date().toISOString(),
-          heartbeatInterval: v.heartbeatInterval || 180,
-          guardians: (v.guardians || []).map((addr) => ({ address: addr, hasApproved: false })),
-          quorum: v.guardianThreshold || 1,
-          ipfsCid: v.ipfsHash,
-          secretPayload: "",
-        });
+        liveList.push(formatVaultItem(v, currentAddress, "Owner"));
       });
 
       // 2. Guardian Vaults
       (dashboardData.guardianVaults || []).forEach((v) => {
         if (!liveList.some((existing) => existing.numericId === v.vaultId)) {
-          liveList.push({
-            id: `HLM-${v.vaultId || v._id}`,
-            numericId: v.vaultId,
-            title: v.title || "Inheritance Vault",
-            description: v.description || "",
-            role: "Guardian",
-            status: v.status || "InGracePeriod",
-            owner: v.ownerAddress,
-            beneficiary: v.beneficiaryAddress,
-            lastKnownHeartbeat: v.lastKnownHeartbeat || v.createdAt || new Date().toISOString(),
-            heartbeatInterval: v.heartbeatInterval || 180,
-            guardians: (v.guardians || []).map((addr) => ({
-              address: addr,
-              hasApproved: addr.toLowerCase() === currentAddress && v.status === "Approved",
-            })),
-            quorum: v.guardianThreshold || 1,
-            ipfsCid: v.ipfsHash,
-            secretPayload: "",
-          });
+          liveList.push(formatVaultItem(v, currentAddress, "Guardian"));
         }
       });
 
       // 3. Beneficiary Vaults
       (dashboardData.beneficiaryVaults || []).forEach((v) => {
         if (!liveList.some((existing) => existing.numericId === v.vaultId)) {
-          liveList.push({
-            id: `HLM-${v.vaultId || v._id}`,
-            numericId: v.vaultId,
-            title: v.title || "Inheritance Vault",
-            description: v.description || "",
-            role: "Beneficiary",
-            status: v.status || "Approved",
-            owner: v.ownerAddress,
-            beneficiary: v.beneficiaryAddress,
-            lastKnownHeartbeat: v.lastKnownHeartbeat || v.createdAt || new Date().toISOString(),
-            heartbeatInterval: v.heartbeatInterval || 180,
-            guardians: (v.guardians || []).map((addr) => ({ address: addr, hasApproved: true })),
-            quorum: v.guardianThreshold || 1,
-            ipfsCid: v.ipfsHash,
-            secretPayload: "",
-          });
+          liveList.push(formatVaultItem(v, currentAddress, "Beneficiary"));
         }
       });
 
@@ -130,24 +142,50 @@ export default function App() {
     }
   }, [dashboardData, activeAddress]);
 
-  const visibleVaults = useMemo(
-    () =>
-      vaults.filter(
-        (vault) => filter === "all" || vault.role.toLowerCase() === filter.toLowerCase(),
-      ),
-    [filter, vaults],
-  );
+  // Global "All Vaults" view vs Role-Filtered View
+  const visibleVaults = useMemo(() => {
+    const currentAddr = activeAddress.toLowerCase();
+
+    if (filter === "all") {
+      if (allVaults && allVaults.length > 0) {
+        return allVaults.map((v) => formatVaultItem(v, currentAddr));
+      }
+      return vaults;
+    }
+
+    if (filter === "owner") {
+      return (dashboardData?.ownedVaults || []).map((v) =>
+        formatVaultItem(v, currentAddr, "Owner")
+      );
+    }
+
+    if (filter === "guardian") {
+      return (dashboardData?.guardianVaults || []).map((v) =>
+        formatVaultItem(v, currentAddr, "Guardian")
+      );
+    }
+
+    if (filter === "beneficiary") {
+      return (dashboardData?.beneficiaryVaults || []).map((v) =>
+        formatVaultItem(v, currentAddr, "Beneficiary")
+      );
+    }
+
+    return vaults;
+  }, [filter, allVaults, vaults, dashboardData, activeAddress]);
 
   // Scenario lab toggle for the first vault
   function updateDemo(field, value) {
     setVaults((current) =>
-      current.map((vault, index) => (index === 0 ? { ...vault, [field]: value } : vault)),
+      current.map((vault, index) =>
+        index === 0 ? { ...vault, [field]: value } : vault
+      )
     );
   }
 
   // Handle all vault actions (onchain transaction + MongoDB API sync + state refresh)
   async function handleAction(vaultId, action) {
-    const vault = vaults.find((item) => item.id === vaultId);
+    const vault = visibleVaults.find((item) => item.id === vaultId) || vaults.find((item) => item.id === vaultId);
     if (!vault) return;
 
     if (action === "view") {
@@ -156,7 +194,8 @@ export default function App() {
     }
 
     try {
-      const numericId = vault.numericId || parseInt(vault.id.replace("HLM-", ""), 10);
+      const numericId =
+        vault.numericId || parseInt(vault.id.replace("HLM-", ""), 10);
 
       if (action === "ping" || action === "recover") {
         notify("Submitting heartbeat transaction...", "pending");
@@ -175,7 +214,11 @@ export default function App() {
           });
         } catch {}
 
-        notify(action === "ping" ? "Heartbeat confirmed onchain!" : "Vault recovered and active!");
+        notify(
+          action === "ping"
+            ? "Heartbeat confirmed onchain!"
+            : "Vault recovered and active!"
+        );
         await refreshDashboard();
       } else if (action === "attest") {
         notify("Submitting guardian attestation...", "pending");
@@ -229,7 +272,7 @@ export default function App() {
     }
   }
 
-  const firstVault = vaults[0];
+  const firstVault = visibleVaults[0] || vaults[0];
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
@@ -248,7 +291,9 @@ export default function App() {
           } else {
             try {
               const connectedAccount = await connectWallet();
-              notify(`Connected: ${connectedAccount.slice(0, 6)}…${connectedAccount.slice(-4)}`);
+              notify(
+                `Connected: ${connectedAccount.slice(0, 6)}…${connectedAccount.slice(-4)}`
+              );
             } catch (e) {
               notify(e.message || "Failed to connect wallet", "failed");
             }
@@ -274,26 +319,27 @@ export default function App() {
             <span className="size-2 rounded-full bg-emerald-500 shadow-[0_0_0_4px_rgb(236,253,245)]" />
             MongoDB Synced
             <span className="text-slate-300">·</span>
-            {isConnected ? (chainId === 11155111 ? "Sepolia Testnet" : "Local Hardhat") : "Demo Wallet Active"}
+            {isConnected
+              ? chainId === 11155111
+                ? "Sepolia Testnet"
+                : "Local Hardhat"
+              : "Demo Wallet Active"}
           </div>
         </div>
 
         <MetricsRow
           totalOwned={
             dashboardData?.summary?.totalOwned ??
-            vaults.filter((vault) => vault.role === "Owner").length
+            allVaults.length ??
+            vaults.length
           }
           pendingGuardianApprovals={
             dashboardData?.summary?.pendingGuardianApprovals ??
-            vaults.filter(
-              (vault) => vault.role === "Guardian" && vault.status === "InGracePeriod",
-            ).length
+            allVaults.filter((v) => v.status === "InGracePeriod").length
           }
           claimableVaults={
             dashboardData?.summary?.claimableVaults ??
-            vaults.filter(
-              (vault) => vault.role === "Beneficiary" && vault.status === "Approved",
-            ).length
+            allVaults.filter((v) => v.status === "Approved").length
           }
         />
 
@@ -305,11 +351,17 @@ export default function App() {
               </div>
               <div>
                 <p className="text-sm font-semibold text-slate-800">Scenario lab</p>
-                <p className="text-xs text-slate-500">Simulate states & test roles on vault #{firstVault.numericId || firstVault.id}.</p>
+                <p className="text-xs text-slate-500">
+                  Simulate states & test roles on vault #
+                  {firstVault.numericId || firstVault.id}.
+                </p>
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <SlidersHorizontal size={15} className="hidden text-slate-400 sm:block" />
+              <SlidersHorizontal
+                size={15}
+                className="hidden text-slate-400 sm:block"
+              />
               <select
                 aria-label="Demo role"
                 value={firstVault.role}
@@ -337,10 +389,14 @@ export default function App() {
         <div className="mt-7 flex items-center justify-between">
           <div>
             <h2 className="font-display text-lg font-semibold text-slate-900">
-              {filter === "all" ? "All vault activity" : `${filter[0].toUpperCase()}${filter.slice(1)} view`}
+              {filter === "all"
+                ? "All protocol vaults"
+                : `${filter[0].toUpperCase()}${filter.slice(1)} view`}
             </h2>
             <p className="mt-0.5 text-xs text-slate-500">
-              {visibleVaults.length} {visibleVaults.length === 1 ? "vault" : "vaults"} loaded from MongoDB
+              {visibleVaults.length}{" "}
+              {visibleVaults.length === 1 ? "vault" : "vaults"}{" "}
+              {filter === "all" ? "across protocol" : "matching role"}
             </p>
           </div>
           <button
@@ -350,7 +406,10 @@ export default function App() {
             }}
             className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-600 hover:text-indigo-700"
           >
-            <RefreshCw size={13} className={dashboardLoading ? "animate-spin" : ""} />
+            <RefreshCw
+              size={13}
+              className={dashboardLoading ? "animate-spin" : ""}
+            />
             Refresh data
           </button>
         </div>
@@ -383,10 +442,15 @@ export default function App() {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         onSuccess={(created) => {
-          notify(`Vault #${created.vaultId} encrypted, pinned & saved to MongoDB!`);
+          notify(
+            `Vault #${created.vaultId} encrypted, pinned & saved to MongoDB!`
+          );
         }}
       />
-      <SecretPayloadViewer vault={secretVault} onClose={() => setSecretVault(null)} />
+      <SecretPayloadViewer
+        vault={secretVault}
+        onClose={() => setSecretVault(null)}
+      />
       <Toast toast={toast} />
     </div>
   );

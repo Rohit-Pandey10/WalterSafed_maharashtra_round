@@ -295,6 +295,32 @@ export const syncVaultState = async (req, res) => {
   }
 };
 
+/**
+ * @route GET /api/v1/vaults
+ * @desc Retrieve all indexed vaults across all users
+ */
+export const getAllVaults = async (req, res) => {
+  try {
+    let vaults = [];
+    if (isDBConnected()) {
+      vaults = await VaultRecord.find().sort({ updatedAt: -1 });
+    } else {
+      vaults = Array.from(mockVaultStore.values()).sort((a, b) => (b.vaultId || 0) - (a.vaultId || 0));
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: vaults,
+    });
+  } catch (error) {
+    console.error('Error in getAllVaults:', error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to fetch all vaults',
+    });
+  }
+};
+
 // Aliases for compatibility
 export const pinPayload = pinVaultPayload;
 export const getUserVaults = getVaultsByUser;
@@ -310,6 +336,8 @@ export default {
   getVaultsByUser,
   getUserVaults,
   getVaultById,
+  getAllVaults,
   syncVaultState,
   syncVault,
 };
+

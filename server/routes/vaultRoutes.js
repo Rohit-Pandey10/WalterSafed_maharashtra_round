@@ -6,6 +6,7 @@ import {
   getVaultById,
   syncVaultState,
   getVaultPayload,
+  getAllVaults,
 } from '../controllers/vaultController.js';
 
 const router = express.Router();
@@ -15,6 +16,7 @@ router.post('/pin', pinVaultPayload);
 router.get('/payload/:ipfsHash', getVaultPayload);
 
 // Vault metadata indexing & querying
+router.get('/', getAllVaults);
 router.post('/index', indexVault);
 router.get('/user/:address', getVaultsByUser);
 router.get('/:vaultId', getVaultById);

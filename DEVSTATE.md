@@ -142,6 +142,9 @@
   - Wired `CreateVaultModal` to execute client-side AES-GCM-256 encryption, IPFS pinning, and direct persistence to MongoDB via `POST /api/v1/vaults/index`.
   - Configured `useDashboardData` to default to `0x70997970c51812dc3a010c7d01b50e0d17dc79c8` on page load/refresh, ensuring real MongoDB records persist and render seamlessly across reloads.
   - Replaced static array placeholders in `App.jsx` with live MongoDB records.
+- [x] **Web3 UX: Automatic Network Switching & Global "All Vaults" View**:
+  - **Automatic EIP-3085 / EIP-3326 Switcher (`WalletContext.jsx`)**: Verifies connection chain ID (`0xaa36a7` Sepolia or `0x7a69` Hardhat); prompts automated switch to Sepolia via `wallet_switchEthereumChain` and handles code `4902` by automatically adding Sepolia RPC/explorer metadata via `wallet_addEthereumChain`.
+  - **Global Protocol Vault View (`useDashboardData.js` & `App.jsx`)**: When the "All vaults" tab is selected, fetches from `GET /api/v1/vaults` to show all seeded and minted vaults across the network. Strictly isolates role-based views (`ownedVaults`, `guardianVaults`, `beneficiaryVaults`) when respective tabs are clicked.
 
 ---
 

@@ -7,13 +7,14 @@ const PRIMARY_API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001';
 const FALLBACK_API_URL = 'http://localhost:5000';
 
 /**
- * Custom hook to fetch role-segregated vaults and summary counts from backend dashboard API.
+ * Custom hook to fetch role-segregated vaults, summary metrics, and global vaults list from backend.
  * Uses fallback demo address when wallet is not connected so real MongoDB records load on refresh.
- * @returns {{ data: object | null, loading: boolean, error: string | null, refresh: () => Promise<void>, activeAddress: string }}
+ * @returns {{ data: object | null, allVaults: Array, loading: boolean, error: string | null, refresh: () => Promise<void>, activeAddress: string }}
  */
 export const useDashboardData = () => {
   const { account } = useWallet();
   const [data, setData] = useState(null);
+  const [allVaults, setAllVaults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -23,29 +24,51 @@ export const useDashboardData = () => {
     setLoading(true);
     setError(null);
 
-    const endpoints = [
+    // 1. Fetch address-specific dashboard (role-segregated lists + metrics summary)
+    const dashboardEndpoints = [
       `${PRIMARY_API_URL}/api/v1/dashboard/${activeAddress}`,
       `${FALLBACK_API_URL}/api/v1/dashboard/${activeAddress}`,
     ];
 
     let lastError = null;
-    let fetched = false;
+    let fetchedDashboard = false;
 
-    for (const url of endpoints) {
+    for (const url of dashboardEndpoints) {
       try {
         const response = await axios.get(url, { timeout: 5000 });
         if (response.data && response.data.success) {
           setData(response.data.data);
-          fetched = true;
+          fetchedDashboard = true;
           break;
         }
       } catch (err) {
         lastError = err;
-        // Continue to fallback endpoint if first is unavailable
       }
     }
 
-    if (!fetched) {
+    // 2. Fetch all vaults globally from /api/v1/vaults (for "All vaults" view)
+    const allVaultsEndpoints = [
+      `${PRIMARY_API_URL}/api/v1/vaults`,
+      `${FALLBACK_API_URL}/api/v1/vaults`,
+    ];
+
+    for (const url of allVaultsEndpoints) {
+      try {
+        const response = await axios.get(url, { timeout: 5000 });
+        if (
+          response.data &&
+          response.data.success &&
+          Array.isArray(response.data.data)
+        ) {
+          setAllVaults(response.data.data);
+          break;
+        }
+      } catch {
+        // Continue to fallback
+      }
+    }
+
+    if (!fetchedDashboard) {
       const errorMessage =
         lastError?.response?.data?.error ||
         lastError?.message ||
@@ -63,6 +86,7 @@ export const useDashboardData = () => {
 
   return {
     data,
+    allVaults,
     loading,
     error,
     refresh: fetchDashboard,
