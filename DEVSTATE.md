@@ -3,6 +3,7 @@
 ## Current Status: Milestone 4 Completed (End-to-End Protocol & Integration Test Suite)
 
 ### Milestone 1: HeirloomVault Contract & Deployment Setup
+
 - [x] **Smart Contract (`contracts/contracts/HeirloomVault.sol`)**:
   - Implemented with Solidity `^0.8.20` and OpenZeppelin `ReentrancyGuard`.
   - Enum `VaultStatus` with 5 states: `Active`, `InGracePeriod`, `Approved`, `Claimed`, `Cancelled`.
@@ -18,6 +19,7 @@
 ---
 
 ### Milestone 2: Backend Services, Storage Proxy & Vault Indexer
+
 - [x] **Environment Configuration**:
   - `server/.env.example` with `PORT`, `MONGO_URI`, `PINATA_API_KEY`, `PINATA_SECRET_KEY`, `PINATA_JWT`, and `JWT_SECRET`.
   - `server/config/keys.js` with dynamic Pinata detection and fallback mode.
@@ -39,9 +41,12 @@
 ---
 
 ### Milestone 2.5: Backend Sentinel Monitor, Aggregated Dashboard APIs & Seeder
+
 - [x] **Sentinel Cron Service (`server/services/sentinelService.js`)**:
   - Automated 30-second heartbeat scanner.
-  - Queries `Active` vaults, checks if `Date.now() > lastKnownHeartbeat + heartbeatInterval`, and automatically transitions expired vaults to `InGracePeriod`.
+  - Queries `Active` vaults and checks if `Date.now() > lastKnownHeartbeat + heartbeatInterval`.
+  - Triggers and verifies `triggerInactivity` on-chain first (`triggerOnchainInactivity` / `fetchOnchainVault`); only transitions MongoDB records to `InGracePeriod` after on-chain confirmation.
+  - If the on-chain transaction fails or reverts, database mutation is suppressed, preserving blockchain-first consistency.
   - Exported `startSentinel()` wired into `server/server.js` following database initialization.
 - [x] **Dashboard Aggregation Endpoint (`server/controllers/dashboardController.js` & `server/routes/dashboardRoutes.js`)**:
   - `GET /api/v1/dashboard/:address`: Returns role-segregated vaults (`ownedVaults`, `guardianVaults`, `beneficiaryVaults`) and computed summary stats (`totalOwned`, `pendingGuardianApprovals`, `claimableVaults`).
@@ -53,6 +58,7 @@
 ---
 
 ### Milestone 2.6: Client-Side Cryptographic Engine (Web Crypto AES-GCM-256)
+
 - [x] **Key Derivation & Web Crypto Engine (`client/src/utils/crypto.js`)**:
   - Browser-native PBKDF2 key derivation using 100,000 SHA-256 iterations and random 16-byte salt (`crypto.getRandomValues`).
   - Zero-dependency client-side AES-GCM-256 encryption (`encryptPayload`) and decryption (`decryptPayload`).
@@ -64,6 +70,7 @@
 ---
 
 ### Milestone 2.7: Web3 Wallet Provider & Contract Hook Bridge (`client/src`)
+
 - [x] **Web3 Client Dependency**:
   - `ethers@^6.17.0` integrated into `client/package.json`.
 - [x] **Wallet Context & Provider (`client/src/context/WalletContext.jsx`)**:
@@ -83,6 +90,7 @@
 ---
 
 ### Milestone 2.8: Multi-Network Configuration for Live Testnet Deployment (`contracts/`)
+
 - [x] **Hardhat Multi-Network Config (`contracts/hardhat.config.cjs` & `contracts/hardhat.config.js`)**:
   - Integrated `dotenv` to load environment variables from `contracts/.env` or root `.env`.
   - Configured `sepolia` testnet (`chainId: 11155111`, `SEPOLIA_RPC_URL`, `DEPLOYER_PRIVATE_KEY` with automated `0x` formatting) and `localhost` (`chainId: 31337`).
@@ -98,14 +106,15 @@
 ---
 
 ### Milestone 3: Figma UI Cockpit Integration & Live Web3/Backend Wiring (`client/`)
+
 - [x] **Component Architecture & Styling Integration**:
   - Extracted and merged all Figma UI components into `client/src/components/`:
-    * [`Navbar.tsx`](file:///Users/rohitpandey/Code/WalterSafed_maharashtra_round/client/src/components/Navbar.tsx): Web3 wallet connection, chain status indicator, and dynamic role navigation tabs (`all`, `owner`, `guardian`, `beneficiary`).
-    * [`MetricsRow.tsx`](file:///Users/rohitpandey/Code/WalterSafed_maharashtra_round/client/src/components/MetricsRow.tsx): Role-aggregated statistics dynamically populated from `/api/v1/dashboard/:address` (`totalOwned`, `pendingGuardianApprovals`, `claimableVaults`).
-    * [`VaultCard.tsx`](file:///Users/rohitpandey/Code/WalterSafed_maharashtra_round/client/src/components/VaultCard.tsx): Interactive vault card with live heartbeat window countdowns, quorum progress bars, and role-specific action buttons (`Ping Heartbeat`, `Recover`, `Attest & Approve`, `Claim & Decrypt`).
-    * [`CreateVaultModal.tsx`](file:///Users/rohitpandey/Code/WalterSafed_maharashtra_round/client/src/components/CreateVaultModal.tsx): Complete inheritance creation modal with guardian configuration, quorum slider, and client-side encryption hooks.
-    * [`SecretPayloadViewer.tsx`](file:///Users/rohitpandey/Code/WalterSafed_maharashtra_round/client/src/components/SecretPayloadViewer.tsx): IPFS payload resolver with Web Crypto decryption key derivation and one-click clipboard copying.
-    * [`Toast.tsx`](file:///Users/rohitpandey/Code/WalterSafed_maharashtra_round/client/src/components/Toast.tsx) & [`EmptyState.tsx`](file:///Users/rohitpandey/Code/WalterSafed_maharashtra_round/client/src/components/EmptyState.tsx): Real-time transaction feedback and zero-state views.
+    - [`Navbar.tsx`](file:///Users/rohitpandey/Code/WalterSafed_maharashtra_round/client/src/components/Navbar.tsx): Web3 wallet connection, chain status indicator, and dynamic role navigation tabs (`all`, `owner`, `guardian`, `beneficiary`).
+    - [`MetricsRow.tsx`](file:///Users/rohitpandey/Code/WalterSafed_maharashtra_round/client/src/components/MetricsRow.tsx): Role-aggregated statistics dynamically populated from `/api/v1/dashboard/:address` (`totalOwned`, `pendingGuardianApprovals`, `claimableVaults`).
+    - [`VaultCard.tsx`](file:///Users/rohitpandey/Code/WalterSafed_maharashtra_round/client/src/components/VaultCard.tsx): Interactive vault card with live heartbeat window countdowns, quorum progress bars, and role-specific action buttons (`Ping Heartbeat`, `Recover`, `Attest & Approve`, `Claim & Decrypt`).
+    - [`CreateVaultModal.tsx`](file:///Users/rohitpandey/Code/WalterSafed_maharashtra_round/client/src/components/CreateVaultModal.tsx): Complete inheritance creation modal with guardian configuration, quorum slider, and client-side encryption hooks.
+    - [`SecretPayloadViewer.tsx`](file:///Users/rohitpandey/Code/WalterSafed_maharashtra_round/client/src/components/SecretPayloadViewer.tsx): IPFS payload resolver with Web Crypto decryption key derivation and one-click clipboard copying.
+    - [`Toast.tsx`](file:///Users/rohitpandey/Code/WalterSafed_maharashtra_round/client/src/components/Toast.tsx) & [`EmptyState.tsx`](file:///Users/rohitpandey/Code/WalterSafed_maharashtra_round/client/src/components/EmptyState.tsx): Real-time transaction feedback and zero-state views.
   - Enhanced styling in `client/src/index.css` and `client/tailwind.config.js` with Google Fonts (`DM Sans`, `Manrope`), input fields, and custom scrollbar utilities.
 - [x] **Live Web3 & Backend Infrastructure Wiring (`client/src/App.jsx`)**:
   - **Wallet & Chain State**: Integrated `useWallet()` for connection, disconnect, address formatting, and multi-network status tracking.
@@ -116,9 +125,9 @@
     3. Deploys vault on-chain via smart contract `createVault(...)`.
     4. Indexes record into MongoDB via `/api/v1/vaults/index`.
   - **On-Chain Action Triggers**:
-    * `Ping Heartbeat` & `Recover` -> `contract.heartbeat(vaultId)` + `/api/v1/vaults/:vaultId/sync`.
-    * `Attest & Approve` -> `contract.attestVault(vaultId)` + `/api/v1/vaults/:vaultId/sync`.
-    * `Claim Vault` -> `contract.claimVault(vaultId)` + `/api/v1/vaults/:vaultId/sync` + auto-launch `SecretPayloadViewer`.
+    - `Ping Heartbeat` & `Recover` -> `contract.heartbeat(vaultId)` + `/api/v1/vaults/:vaultId/sync`.
+    - `Attest & Approve` -> `contract.attestVault(vaultId)` + `/api/v1/vaults/:vaultId/sync`.
+    - `Claim Vault` -> `contract.claimVault(vaultId)` + `/api/v1/vaults/:vaultId/sync` + auto-launch `SecretPayloadViewer`.
   - **Scenario Lab**: Embedded interactive simulator allowing instant testing of all roles and states without requiring live network gas.
 - [x] **Compilation & Integrity Verification**:
   - Maintained complete integrity of all underlying crypto, contract, and hook files.
@@ -127,6 +136,7 @@
 ---
 
 ### Milestone 4: End-to-End Protocol & Integration Test Suite (`server/scripts/testEndToEnd.js`)
+
 - [x] **Automated Verification Harness (`server/scripts/testEndToEnd.js`)**:
   - Added `"test:e2e": "node scripts/testEndToEnd.js"` to `server/package.json`.
   - Connects client Web Crypto engine, live backend APIs (`http://localhost:5001`), MongoDB database, and Ethereum smart contract layer.
@@ -148,5 +158,108 @@
 
 ---
 
+### Milestone 5: Architecture Integrity, On-Chain Cancellation & Trust Boundary
+
+- [x] **Smart Contract On-Chain Cancellation (`contracts/contracts/HeirloomVault.sol`)**:
+  - Implemented `cancelVault(uint256 _vaultId)` restricted to `vault.owner`.
+  - Enforced eligibility check: can only cancel from `Active` or `InGracePeriod` states.
+  - Emits `VaultCancelled(vaultId, owner, timestamp)` and sets status to `VaultStatus.Cancelled (4)`.
+  - Cancelled vaults strictly reject any further heartbeat pings, inactivity triggers, guardian attestations, or beneficiary claims.
+- [x] **Comprehensive Contract Unit Tests (`contracts/test/HeirloomVault.test.cjs`)**:
+  - Added test suite for `cancelVault`: verified owner can cancel from `Active` and `InGracePeriod`; non-owner callers revert with `NotOwner`; cancelled vaults revert guardian attestations, beneficiary claims, duplicate cancellations, and heartbeats with `InvalidVaultStatus`.
+  - All 18 tests passing cleanly in ~330ms.
+- [x] **Frontend Blockchain Failure Handling (`client/src/App.jsx`)**:
+  - In all mutation handlers (`heartbeat`, `attestation`, `claim`, `cancel`), enforced awaiting transaction receipt (`const receipt = await tx.wait()`).
+  - Added strict guard: if transaction reverts, errors, or is rejected in MetaMask, execution stops immediately, displaying an error toast with NO `PATCH /api/v1/vaults/:id/sync` call.
+  - Only syncs database when `receipt?.status === 1`.
+  - For guardian attestation, queries `getVault(numericId)` on-chain to verify whether quorum was truly reached before dispatching state update (`Approved` vs `InGracePeriod`).
+- [x] **Elimination of Fallback Vault Creation (`client/src/components/CreateVaultModal.tsx`)**:
+  - Removed `Math.floor(1000 + Math.random() * 9000)` fallback vault ID generator completely.
+  - Enforced `contractCreateVault` execution and receipt verification (`receipt.status === 1`).
+  - If the transaction reverts, throws, or is rejected in MetaMask: execution halts immediately with error toast; `POST /api/v1/vaults/index` is NEVER called, preventing ghost or unverified records from ever entering MongoDB.
+  - When disconnected from wallet, only allows deterministic demo IDs if demo mode is explicitly enabled (`VITE_ENABLE_DEMO === 'true'` or `heirloom_demo_mode`).
+- [x] **Heartbeat Interval Unit Conversion (`client/src/components/CreateVaultModal.tsx`)**:
+  - Standardized interval option conversion to strictly pass integer seconds to smart contracts and database:
+    - 30 days: `30 * 86400` = `2592000` seconds
+    - 90 days: `90 * 86400` = `7776000` seconds
+    - 180 days: `180 * 86400` = `15552000` seconds
+    - 365 days: `365 * 86400` = `31536000` seconds
+    - Demo (180s): `180` seconds explicitly.
+- [x] **Backend `/sync` Security Lockdown & Deprecation of Fallbacks (`server/controllers/vaultController.js`)**:
+  - Stripped `x-contract-address` header and body `contractAddress` injection completely; binds strictly to verified contract deployment address.
+  - Eliminated unverified `ALLOWED_STATUS_TRANSITIONS` fallback that allowed trusting client-supplied status when RPC failed.
+  - Requires on-chain verification via `contract.getVault(numericId)`. Returns HTTP `503 Service Unavailable` (`{ success: false, error: "Blockchain verification unavailable. State sync rejected." }`) if blockchain verification fails.
+  - Updates MongoDB strictly with values retrieved directly from on-chain state (`onchain.status`, `onchain.approvalsCount`, `onchain.lastHeartbeat`).
+- [x] **Guard Sentinel InGracePeriod Transition (`server/services/sentinelService.js`)**:
+  - When heartbeat expiration is detected, dispatches `triggerOnchainInactivity(vault.vaultId)`.
+  - If on-chain transaction fails: suppresses DB transition, logs `[SENTINEL WARNING] On-chain inactivity trigger failed for Vault #${vault.vaultId}. Suppressing DB transition.`, and continues to next vault.
+  - Only updates `vault.status = 'InGracePeriod'` and `vault.save()` after verified on-chain confirmation or reading verified on-chain state.
+- [x] **Static Provider & E2E JSON-RPC Test Harness (`server/services/chainService.js` & `server/scripts/testEndToEnd.js`)**:
+  - Configured ethers `JsonRpcProvider` with `staticNetwork: true` to prevent infinite network auto-detection retry loops.
+  - Integrated zero-dependency in-process HTTP JSON-RPC bridge in `testEndToEnd.js` on port 8545 to allow the backend server on port 5001 to verify real on-chain Hardhat state during automated test execution.
+- [x] **Verification Suite**:
+  - Hardhat Unit Tests: 18/18 passing (344ms).
+  - Crypto Engine Verification: 4/4 passing (AES-GCM-256 roundtrip, JSON payloads, tamper rejection).
+  - End-to-End Protocol Suite (`npm run test:e2e`): All 6 stages passing cleanly in 1.65s.
+  - Client Build: `vite build` completed cleanly with 0 compilation errors (586kB bundle).
+
+---
+
+### Milestone 6: Decoupled Blockchain State Pattern & Client Resilience
+
+- [x] **Decoupled Blockchain-First State Execution (`client/src/App.jsx`)**:
+  - **Single Source of Truth**: Smart contract transactions mined on Ethereum/Sepolia (`receipt.status === 1`) are permanent, non-custodial, and authoritative. Off-chain MongoDB indexing is strictly an eventual read-cache.
+  - **Independent Transaction Pipeline**:
+    1. **Execute On-Chain**: Dispatches transaction and awaits block confirmation (`await tx.wait()`).
+    2. **On-Chain Failure Boundary**: If the transaction reverts or is rejected in MetaMask (`!receipt || receipt.status !== 1`), execution halts immediately. An error toast is displayed: `"Transaction failed on blockchain."` with 0 database sync attempted.
+    3. **Immediate On-Chain Success**: The instant `receipt.status === 1` is confirmed, the action is marked as successful in the UI with toast: `"Transaction confirmed on-chain!"`.
+    4. **Optimistic Local State Update**: UI immediately updates local vault status (and re-verifies quorum via `contract.getVault(numericId)` for guardian attestations) so the interface reflects on-chain truth without depending on network API latency.
+    5. **Isolated Off-Chain Sync**: Attempts `PATCH /api/v1/vaults/${numericId}/sync` inside an isolated `try/catch`. If network drops, timeout occurs, or MongoDB indexing fails, it logs a warning and notifies `"Blockchain updated successfully. Database index sync pending."` with a warning toast. It NEVER marks the confirmed on-chain action as failed.
+  - **Applied Mutation Handlers**:
+    - `pingHeartbeat` (Active reset & heartbeat timestamp update)
+    - `attestVault` (Guardian quorum evaluation & InGracePeriod -> Approved transition)
+    - `claimVault` (Release authorization & automatic secret payload decryptor opening)
+    - `cancelVault` (Owner revocation & state transition to Cancelled)
+- [x] **Post-Attestation Blockchain Read Failure Resilience (`client/src/App.jsx`)**:
+  - Eliminated fallback inference of blockchain state (`approvalsCount` / `status`) from MongoDB when post-transaction `getVault()` reads fail.
+  - Keeps last known state and notifies user that the transaction was confirmed on-chain while state sync is pending.
+- [x] **Smart Contract Metadata Verification for `/index` (`server/controllers/vaultController.js`)**:
+  - `POST /api/v1/vaults/index` strictly queries `fetchOnchainVault(numericId)` before writing to MongoDB.
+  - Verifies `vaultId`, normalized `ownerAddress`, normalized `beneficiaryAddress`, `guardianThreshold`, normalized `guardians`, `heartbeatInterval`, `ipfsHash`, and `status`. Rejects mismatches with 400.
+- [x] **Untrusted `txHash` Protection (`server/controllers/vaultController.js` & `server/services/chainService.js`)**:
+  - Added `verifyTxHashOnchain` to independently verify transaction receipts on-chain.
+  - Rejects arbitrary client-supplied hashes and preserves existing trusted transaction hashes.
+- [x] **Toast & UI Notification System (`client/src/components/Toast.tsx` & `client/src/types.ts`)**:
+  - Expanded `ToastState` union to support `success` and `warning` types alongside `confirmed`, `failed`, and `pending`.
+  - Added Lucide `AlertTriangle` with amber warning styling and `CheckCircle2` with emerald success styling.
+
+---
+
+### Current Architecture: Decoupled Blockchain-First Source of Truth
+
+```
+[ Client (React 19 + Vite + Web Crypto) ]
+      │
+      ├── (1. PBKDF2 + AES-GCM-256 Client-Side Encryption)
+      │
+      ├── (2. IPFS Envelope Pinning) ───────> [ Storage Proxy (Pinata / Mock IPFS) ]
+      │
+      ├── (3. Smart Contract Mutation) ─────> [ HeirloomVault.sol (Sepolia / Hardhat) ]
+      │      (Wait for receipt.status === 1)           │
+      │      (Immediate UI Confirmation Toast)         │ ─── On-Chain Single Source of Truth ───
+      │      (Optimistic Local State Update)           │
+      │                                                │ (Heartbeat / Grace Period Loop)
+      └── (4. Decoupled Non-Blocking Index Sync)       ▼
+             (PATCH /api/v1/vaults/:id/sync)    [ Sentinel Service ]
+             (Catch error -> Warning Toast)            │ (Relayer triggerInactivity verified on-chain
+                    │                                  │  BEFORE updating database status)
+                    ▼                                  ▼
+          [ MongoDB Atlas Cluster ] <──────────────────┘
+```
+
+---
+
 ### Upcoming Milestones
-- **Hackathon Demo & Pitch Prep**: End-to-end user journeys across Owner, Guardian, and Beneficiary wallets on Sepolia testnet.
+
+- **Live Hackathon Demo & Multi-Party Journey**: End-to-end verification across 3 distinct MetaMask browser profiles (Owner, Guardian, Beneficiary) on Ethereum Sepolia testnet.
+

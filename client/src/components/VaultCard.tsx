@@ -21,6 +21,7 @@ interface VaultCardProps {
     action: "ping" | "recover" | "cancel" | "attest" | "claim" | "view",
   ) => void;
   isTransacting?: boolean;
+  account?: string | null;
 }
 
 const statusStyles: Record<VaultStatus, string> = {
@@ -48,6 +49,32 @@ const statusLabels: Record<VaultStatus, string> = {
 function formatAddress(address?: string) {
   if (!address) return "0x0000…0000";
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
+}
+
+function formatCountdown(diffSec: number) {
+  if (diffSec <= 0) return "00:00 (Expired)";
+  if (diffSec < 3600) {
+    // Under 1 hour: display mm:ss
+    const m = Math.floor(diffSec / 60);
+    const s = diffSec % 60;
+    return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")} left`;
+  }
+  const hours = Math.floor(diffSec / 3600);
+  const days = Math.floor(hours / 24);
+  const remainingHours = hours % 24;
+  if (days > 0) {
+    return `${days}d ${remainingHours}h left`;
+  }
+  const minutes = Math.floor((diffSec % 3600) / 60);
+  return `${hours}h ${minutes}m left`;
+}
+
+function formatInterval(seconds: number) {
+  if (seconds < 60) return `${seconds}s interval`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m interval`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h interval`;
+  const days = Math.floor(seconds / 86400);
+  return `${days}-day interval`;
 }
 
 function Button({
@@ -78,25 +105,42 @@ function Button({
   );
 }
 
-export default function VaultCard({ vault, onAction, isTransacting = false }: VaultCardProps) {
-  const approvals = vault.guardians.filter((guardian) => guardian.hasApproved).length;
-  const quorum = Math.max(1, vault.quorum || 1);
-  const quorumProgress = Math.min((approvals / quorum) * 100, 100);
+export default function VaultCard({
+  vault,
+  onAction,
+  isTransacting = false,
+  account = null,
+}: VaultCardProps) {
+  const threshold = vault.guardianThreshold || vault.quorum || 1;
+  const approvals = typeof vault.approvalsCount === "number"
+    ? vault.approvalsCount
+    : vault.guardians.filter((guardian) => guardian.hasApproved).length;
+  const quorumProgress = Math.min((approvals / threshold) * 100, 100);
 
   const heartbeatDate = new Date(vault.lastKnownHeartbeat);
-  // Support intervals in seconds (e.g. 180s) or days
-  const intervalInSec = vault.heartbeatInterval > 1000 ? vault.heartbeatInterval : vault.heartbeatInterval * 86400;
+  const intervalInSec = Number(vault.heartbeatInterval) || 180;
   const deadline = new Date(heartbeatDate.getTime() + intervalInSec * 1000);
   const diffSec = Math.max(0, Math.floor((deadline.getTime() - Date.now()) / 1000));
-  const daysRemaining = Math.max(0, Math.ceil(diffSec / 86400));
 
-  const remainingLabel =
-    intervalInSec <= 3600
-      ? `${diffSec}s left`
-      : `${daysRemaining} days left`;
+  let remainingLabel = "";
+  if (vault.status === "Approved") {
+    remainingLabel = "Ready to claim";
+  } else if (vault.status === "Claimed") {
+    remainingLabel = "Secret claimed";
+  } else if (vault.status === "Cancelled") {
+    remainingLabel = "Vault cancelled";
+  } else {
+    remainingLabel = formatCountdown(diffSec);
+  }
 
-  const isGuardianSigned =
-    vault.role === "Guardian" && Boolean(vault.guardians[0]?.hasApproved);
+  const intervalLabel = formatInterval(intervalInSec);
+
+  // Check if the currently connected account is an authorized guardian who has already approved
+  const hasCurrentGuardianApproved = vault.guardians.some(
+    (g: any) =>
+      (typeof g === "string" ? g.toLowerCase() : g.address?.toLowerCase()) ===
+        account?.toLowerCase() && g.hasApproved
+  );
 
   return (
     <article className="flex min-h-[400px] flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition duration-200 hover:border-slate-300 hover:shadow-md">
@@ -157,7 +201,7 @@ export default function VaultCard({ vault, onAction, isTransacting = false }: Va
         <p className="mt-2.5 text-[11px] text-slate-400">
           Last signal {heartbeatDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
           {" · "}
-          {vault.heartbeatInterval > 1000 ? `${vault.heartbeatInterval}s` : `${vault.heartbeatInterval}-day`} interval
+          {intervalLabel}
         </p>
       </div>
 
@@ -169,7 +213,7 @@ export default function VaultCard({ vault, onAction, isTransacting = false }: Va
               Guardian quorum
             </span>
             <span className="font-semibold text-slate-800">
-              {approvals} / {quorum} confirmed
+              {approvals} / {threshold} confirmed
             </span>
           </div>
           <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
@@ -208,13 +252,15 @@ export default function VaultCard({ vault, onAction, isTransacting = false }: Va
                 <RotateCcw size={14} /> Recover
               </Button>
             )}
-            <Button
-              onClick={() => onAction(vault.id, "cancel")}
-              variant="danger"
-              disabled={isTransacting || vault.status === "Cancelled" || vault.status === "Claimed"}
-            >
-              <Ban size={14} /> Cancel
-            </Button>
+            {vault.status !== "Cancelled" && vault.status !== "Claimed" && (
+              <Button
+                onClick={() => onAction(vault.id, "cancel")}
+                variant="danger"
+                disabled={isTransacting}
+              >
+                <Ban size={14} /> Cancel vault
+              </Button>
+            )}
           </>
         )}
 
@@ -225,7 +271,7 @@ export default function VaultCard({ vault, onAction, isTransacting = false }: Va
         )}
         {vault.role === "Guardian" &&
           vault.status === "InGracePeriod" &&
-          (isGuardianSigned ? (
+          (hasCurrentGuardianApproved ? (
             <span className="inline-flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">
               <Check size={15} /> Vote recorded
             </span>

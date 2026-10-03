@@ -25,12 +25,14 @@ export interface Vault {
   heartbeatInterval: number;
   guardians: Guardian[];
   quorum: number;
+  guardianThreshold?: number;
+  approvalsCount?: number;
   secretPayload?: string;
   ipfsCid: string;
 }
 
 export type ToastState = {
   id: number;
-  type: "pending" | "confirmed" | "failed";
+  type: "pending" | "confirmed" | "failed" | "success" | "warning";
   message: string;
 };

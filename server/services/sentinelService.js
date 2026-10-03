@@ -1,5 +1,7 @@
 import { VaultRecord } from '../models/VaultRecord.js';
 import { isDBConnected } from '../config/db.js';
+import { triggerOnchainInactivity, fetchOnchainVault } from './chainService.js';
+import config from '../config/keys.js';
 
 let sentinelInterval = null;
 
@@ -22,19 +24,48 @@ export const scanActiveVaults = async () => {
       const expirationMs = lastHeartbeatMs + vault.heartbeatInterval * 1000;
 
       if (now > expirationMs) {
-        vault.status = 'InGracePeriod';
-        vault.updatedAt = new Date();
-        await vault.save();
-
         console.warn(
-          `[SENTINEL ALERT] Vault ID ${vault.vaultId} heartbeat expired. Status shifted to InGracePeriod.`
+          `[SENTINEL ALERT] Vault ID ${vault.vaultId} heartbeat expired (elapsed: ${Math.floor((now - expirationMs) / 1000)}s).`
         );
+
+        // Check if on-chain state is already InGracePeriod
+        let onchainConfirmed = false;
+        const currentOnchain = await fetchOnchainVault(vault.vaultId);
+        if (currentOnchain.success && currentOnchain.data.status === 'InGracePeriod') {
+          onchainConfirmed = true;
+        } else {
+          // Dispatch triggerOnchainInactivity
+          const onchainRes = await triggerOnchainInactivity(vault.vaultId);
+          if (onchainRes.success === true) {
+            console.log(
+              `[SENTINEL CONFIRMED] On-chain triggerInactivity confirmed for Vault #${vault.vaultId} (tx: ${onchainRes.txHash})`
+            );
+            onchainConfirmed = true;
+          } else {
+            console.warn(
+              `[SENTINEL WARNING] On-chain inactivity trigger failed for Vault #${vault.vaultId}. Suppressing DB transition.`
+            );
+            continue; // Suppress DB transition, proceed to next vault
+          }
+        }
+
+        if (onchainConfirmed) {
+          vault.status = 'InGracePeriod';
+          vault.updatedAt = new Date();
+          await vault.save();
+
+          console.warn(
+            `[SENTINEL CONFIRMED] Vault ID ${vault.vaultId} status updated to InGracePeriod in database.`
+          );
+        }
       }
     }
   } catch (error) {
     console.error('[Sentinel Error] Failed to scan vaults:', error.message);
   }
 };
+
+export const scanExpiredVaults = scanActiveVaults;
 
 /**
  * Start the automated sentinel background loop

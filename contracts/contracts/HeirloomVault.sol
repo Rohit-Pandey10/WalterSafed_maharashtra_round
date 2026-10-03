@@ -70,7 +70,11 @@ contract HeirloomVault is ReentrancyGuard {
         address indexed beneficiary,
         uint256 timestamp
     );
-    event VaultCancelled(uint256 indexed vaultId, uint256 timestamp);
+    event VaultCancelled(
+        uint256 indexed vaultId,
+        address indexed owner,
+        uint256 timestamp
+    );
 
     // Custom Errors
     error VaultNotFound();
@@ -255,6 +259,27 @@ contract HeirloomVault is ReentrancyGuard {
         emit VaultClaimed(_vaultId, msg.sender, block.timestamp);
 
         return v.ipfsHash;
+    }
+
+    /**
+     * @notice Called by the vault owner to cancel an Active or InGracePeriod vault.
+     * @param _vaultId Identifier of the vault.
+     */
+    function cancelVault(uint256 _vaultId) external vaultExists(_vaultId) {
+        Vault storage v = vaults[_vaultId];
+        if (msg.sender != v.owner) {
+            revert NotOwner();
+        }
+        if (
+            v.status != VaultStatus.Active &&
+            v.status != VaultStatus.InGracePeriod
+        ) {
+            revert InvalidVaultStatus(v.status);
+        }
+
+        v.status = VaultStatus.Cancelled;
+
+        emit VaultCancelled(_vaultId, msg.sender, block.timestamp);
     }
 
     /**

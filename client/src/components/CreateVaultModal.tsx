@@ -86,8 +86,23 @@ export default function CreateVaultModal({
       return;
     }
 
-    const numericInterval =
-      interval === "custom" ? customInterval : Number(interval);
+    let numericInterval = 180;
+    if (interval === "custom") {
+      numericInterval = Math.floor(Number(customInterval));
+    } else if (interval === "30_days" || interval === "2592000") {
+      numericInterval = 30 * 86400; // 2592000 seconds
+    } else if (interval === "90_days" || interval === "7776000") {
+      numericInterval = 90 * 86400; // 7776000 seconds
+    } else if (interval === "180_days" || interval === "15552000") {
+      numericInterval = 180 * 86400; // 15552000 seconds
+    } else if (interval === "365_days" || interval === "31536000") {
+      numericInterval = 365 * 86400; // 31536000 seconds
+    } else if (interval === "180" || interval === "demo") {
+      numericInterval = 180;
+    } else {
+      const parsed = Math.floor(Number(interval));
+      numericInterval = isNaN(parsed) || parsed <= 0 ? 180 : parsed;
+    }
 
     const vaultTitle = title.trim() || "Family recovery plan";
     const vaultDesc = description.trim() || "A newly secured inheritance vault.";
@@ -116,8 +131,15 @@ export default function CreateVaultModal({
       const ipfsHash =
         pinResponse.data?.ipfsHash || `bafkreimock${Date.now()}`;
 
-      // 3. Smart Contract Deployment (or deterministic mock ID)
-      let newVaultId = Math.floor(1000 + Math.random() * 9000);
+      // 3. Smart Contract Deployment (Blockchain is Single Source of Truth)
+      let newVaultId: number | null = null;
+      let txHash: string | undefined = undefined;
+
+      const isDemoExplicit =
+        import.meta.env.VITE_ENABLE_DEMO === "true" ||
+        (typeof window !== "undefined" &&
+          window.localStorage.getItem("heirloom_demo_mode") === "true");
+
       if (isConnected) {
         setLoadingStep("Deploying vault to Ethereum smart contract...");
         try {
@@ -128,15 +150,35 @@ export default function CreateVaultModal({
             quorum,
             ipfsHash
           );
-          if (txRes && txRes.vaultId) {
-            newVaultId = txRes.vaultId;
+
+          if (!txRes?.receipt || txRes.receipt.status !== 1 || !txRes.vaultId) {
+            throw new Error("On-chain vault deployment failed. Aborting.");
           }
+
+          newVaultId = Number(txRes.vaultId);
+          txHash = txRes.txHash;
         } catch (contractErr: any) {
-          console.warn("Contract call skipped/failed:", contractErr.message);
+          console.error("On-chain contract deployment failed:", contractErr);
+          const failureMsg = "On-chain vault deployment failed. Aborting.";
+          setError(failureMsg);
+          throw new Error(failureMsg);
+        }
+      } else {
+        if (isDemoExplicit) {
+          newVaultId = 9999;
+        } else {
+          const noWalletMsg =
+            "Wallet not connected. Connect MetaMask to deploy on-chain.";
+          setError(noWalletMsg);
+          throw new Error(noWalletMsg);
         }
       }
 
-      // 4. Save permanently into MongoDB via /api/v1/vaults/index
+      if (!newVaultId) {
+        throw new Error("On-chain vault deployment failed. Aborting.");
+      }
+
+      // 4. Save permanently into MongoDB via /api/v1/vaults/index ONLY after verified on-chain confirmation
       setLoadingStep("Saving vault record into MongoDB database...");
       const ownerAddress = account || FALLBACK_DEMO_ADDRESS;
       const indexResult = await apiPost("/api/v1/vaults/index", {
@@ -151,6 +193,7 @@ export default function CreateVaultModal({
         heartbeatInterval: numericInterval,
         lastKnownHeartbeat: Date.now(),
         status: "Active",
+        txHash,
       });
 
       // 5. Trigger live re-fetch from MongoDB
@@ -325,10 +368,11 @@ export default function CreateVaultModal({
                 onChange={(event) => setInterval(event.target.value)}
                 className="field"
               >
-                <option value="180">180 seconds (Demo testnet)</option>
-                <option value="30">30 days</option>
-                <option value="90">90 days</option>
-                <option value="180_days">180 days</option>
+                <option value="180">180 seconds (Fast demo)</option>
+                <option value="2592000">30 days (1 month)</option>
+                <option value="7776000">90 days (Quarterly)</option>
+                <option value="15552000">180 days (Standard)</option>
+                <option value="31536000">365 days (1 year)</option>
                 <option value="custom">Custom (seconds)</option>
               </select>
             </label>

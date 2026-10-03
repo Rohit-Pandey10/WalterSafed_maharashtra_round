@@ -263,4 +263,72 @@ describe("HeirloomVault Protocol", function () {
       expect(v.status).to.equal(3); // Claimed
     });
   });
+
+  describe("6. Vault Cancellation", function () {
+    beforeEach(async function () {
+      const guardians = [guardian1.address, guardian2.address];
+      await vault
+        .connect(owner)
+        .createVault(beneficiary.address, sampleIpfsHash, interval, guardians, 2);
+    });
+
+    it("should allow owner to cancel vault in Active state and emit VaultCancelled", async function () {
+      await expect(vault.connect(owner).cancelVault(1))
+        .to.emit(vault, "VaultCancelled")
+        .withArgs(1, owner.address, (val) => val > 0);
+
+      const v = await vault.getVault(1);
+      expect(v.status).to.equal(4); // Cancelled
+    });
+
+    it("should allow owner to cancel vault in InGracePeriod state", async function () {
+      await time.increase(interval + 1);
+      await vault.connect(stranger).triggerInactivity(1);
+
+      let v = await vault.getVault(1);
+      expect(v.status).to.equal(1); // InGracePeriod
+
+      await expect(vault.connect(owner).cancelVault(1))
+        .to.emit(vault, "VaultCancelled");
+
+      v = await vault.getVault(1);
+      expect(v.status).to.equal(4); // Cancelled
+    });
+
+    it("should revert if non-owner attempts to cancel", async function () {
+      await expect(
+        vault.connect(stranger).cancelVault(1)
+      ).to.be.revertedWithCustomError(vault, "NotOwner");
+
+      await expect(
+        vault.connect(beneficiary).cancelVault(1)
+      ).to.be.revertedWithCustomError(vault, "NotOwner");
+    });
+
+    it("should prevent guardians from attesting or beneficiaries from claiming a cancelled vault", async function () {
+      // Cancel the vault
+      await vault.connect(owner).cancelVault(1);
+
+      // Guardians cannot attest
+      await expect(
+        vault.connect(guardian1).attestVault(1)
+      ).to.be.revertedWithCustomError(vault, "InvalidVaultStatus");
+
+      // Beneficiary cannot claim
+      await expect(
+        vault.connect(beneficiary).claimVault(1)
+      ).to.be.revertedWithCustomError(vault, "InvalidVaultStatus");
+
+      // Owner cannot cancel again
+      await expect(
+        vault.connect(owner).cancelVault(1)
+      ).to.be.revertedWithCustomError(vault, "InvalidVaultStatus");
+
+      // Owner cannot heartbeat
+      await expect(
+        vault.connect(owner).heartbeat(1)
+      ).to.be.revertedWithCustomError(vault, "InvalidVaultStatus");
+    });
+  });
 });
+

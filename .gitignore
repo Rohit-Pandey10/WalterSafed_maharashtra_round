@@ -43,3 +43,6 @@ yarn-error.log*
 .vscode/
 *.swp
 *.swo
+
+# MCP / Testing artifacts
+.playwright-mcp/

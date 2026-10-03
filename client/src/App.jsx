@@ -57,6 +57,13 @@ const formatVaultItem = (v, currentAddr, forcedRole = null) => {
     }
   }
 
+  const threshold = v.guardianThreshold || 1;
+  const approvalsCount = typeof v.approvalsCount === 'number'
+    ? v.approvalsCount
+    : (v.status === 'Approved' || v.status === 'Claimed')
+    ? threshold
+    : 0;
+
   return {
     id: `HLM-${v.vaultId || v._id}`,
     numericId: v.vaultId,
@@ -69,11 +76,13 @@ const formatVaultItem = (v, currentAddr, forcedRole = null) => {
     lastKnownHeartbeat:
       v.lastKnownHeartbeat || v.createdAt || new Date().toISOString(),
     heartbeatInterval: v.heartbeatInterval || 180,
-    guardians: (v.guardians || []).map((addr) => ({
-      address: addr,
-      hasApproved: v.status === "Approved" || v.status === "Claimed",
+    guardians: (v.guardians || []).map((addr, idx) => ({
+      address: typeof addr === 'string' ? addr : addr.address,
+      hasApproved: idx < approvalsCount,
     })),
-    quorum: v.guardianThreshold || 1,
+    quorum: threshold,
+    guardianThreshold: threshold,
+    approvalsCount: approvalsCount,
     ipfsCid: v.ipfsHash,
     secretPayload: "",
   };
@@ -88,7 +97,7 @@ export default function App() {
     connectWallet,
     disconnectWallet,
   } = useWallet();
-  const { pingHeartbeat, attestVault, claimVault, isTransacting } =
+  const { pingHeartbeat, attestVault, claimVault, cancelVault, getVault, isTransacting } =
     useHeirloomVault();
   const {
     data: dashboardData,
@@ -103,6 +112,7 @@ export default function App() {
   const [createOpen, setCreateOpen] = useState(false);
   const [secretVault, setSecretVault] = useState(null);
   const [toast, setToast] = useState(null);
+  const [optimisticUpdates, setOptimisticUpdates] = useState({});
 
   const notify = (message, type = "confirmed") => {
     const id = Date.now();
@@ -110,6 +120,16 @@ export default function App() {
     window.setTimeout(
       () => setToast((current) => (current?.id === id ? null : current)),
       3200
+    );
+  };
+
+  const applyOptimisticUpdate = (numericId, updates) => {
+    setOptimisticUpdates((prev) => ({
+      ...prev,
+      [numericId]: { ...(prev[numericId] || {}), ...updates },
+    }));
+    setVaults((prev) =>
+      prev.map((v) => (v.numericId === numericId ? { ...v, ...updates } : v))
     );
   };
 
@@ -146,44 +166,54 @@ export default function App() {
   const visibleVaults = useMemo(() => {
     const currentAddr = activeAddress.toLowerCase();
 
+    let list = [];
     if (filter === "all") {
       if (allVaults && allVaults.length > 0) {
-        return allVaults.map((v) => formatVaultItem(v, currentAddr));
+        list = allVaults.map((v) => formatVaultItem(v, currentAddr));
+      } else {
+        list = vaults;
       }
-      return vaults;
-    }
-
-    if (filter === "owner") {
-      return (dashboardData?.ownedVaults || []).map((v) =>
+    } else if (filter === "owner") {
+      list = (dashboardData?.ownedVaults || []).map((v) =>
         formatVaultItem(v, currentAddr, "Owner")
       );
-    }
-
-    if (filter === "guardian") {
-      return (dashboardData?.guardianVaults || []).map((v) =>
+    } else if (filter === "guardian") {
+      list = (dashboardData?.guardianVaults || []).map((v) =>
         formatVaultItem(v, currentAddr, "Guardian")
       );
-    }
-
-    if (filter === "beneficiary") {
-      return (dashboardData?.beneficiaryVaults || []).map((v) =>
+    } else if (filter === "beneficiary") {
+      list = (dashboardData?.beneficiaryVaults || []).map((v) =>
         formatVaultItem(v, currentAddr, "Beneficiary")
       );
+    } else {
+      list = vaults;
     }
 
-    return vaults;
-  }, [filter, allVaults, vaults, dashboardData, activeAddress]);
+    // Apply any pending optimistic updates so UI reflects confirmed on-chain reality
+    return list.map((item) => {
+      const pending = optimisticUpdates[item.numericId];
+      if (pending) {
+        return { ...item, ...pending };
+      }
+      return item;
+    });
+  }, [filter, allVaults, vaults, dashboardData, activeAddress, optimisticUpdates]);
 
   // Scenario lab toggle for the first vault
   function updateDemo(field, value) {
-    setVaults((current) =>
-      current.map((vault, index) =>
-        index === 0 ? { ...vault, [field]: value } : vault
-      )
-    );
+    const target = visibleVaults[0] || vaults[0];
+    if (target?.numericId) {
+      applyOptimisticUpdate(target.numericId, { [field]: value });
+    } else {
+      setVaults((current) =>
+        current.map((vault, index) =>
+          index === 0 ? { ...vault, [field]: value } : vault
+        )
+      );
+    }
   }
 
-  // Handle all vault actions (onchain transaction + MongoDB API sync + state refresh)
+  // Handle all vault actions (Decoupled on-chain execution + independent MongoDB sync)
   async function handleAction(vaultId, action) {
     const vault = visibleVaults.find((item) => item.id === vaultId) || vaults.find((item) => item.id === vaultId);
     if (!vault) return;
@@ -193,82 +223,187 @@ export default function App() {
       return;
     }
 
-    try {
-      const numericId =
-        vault.numericId || parseInt(vault.id.replace("HLM-", ""), 10);
+    const numericId =
+      vault.numericId || parseInt(vault.id.replace("HLM-", ""), 10);
 
-      if (action === "ping" || action === "recover") {
-        notify("Submitting heartbeat transaction...", "pending");
-        if (isConnected && numericId) {
-          try {
-            await pingHeartbeat(numericId);
-          } catch (e) {
-            console.warn("Contract heartbeat fallback:", e.message);
-          }
+    if (!isConnected || !numericId) {
+      notify("Wallet must be connected to execute this on-chain transaction.", "failed");
+      return;
+    }
+
+    if (action === "ping" || action === "recover") {
+      // 1. Execute smart contract action and await receipt
+      notify("Submitting heartbeat transaction on-chain...", "pending");
+      let receipt;
+      try {
+        const res = await pingHeartbeat(numericId);
+        receipt = res?.receipt;
+        if (!receipt || receipt.status !== 1) {
+          throw new Error("Transaction failed on blockchain.");
         }
-        // Sync with backend API
-        try {
-          await apiRequest("patch", `/api/v1/vaults/${numericId}/sync`, {
-            status: "Active",
-            lastKnownHeartbeat: new Date().toISOString(),
-          });
-        } catch {}
-
-        notify(
-          action === "ping"
-            ? "Heartbeat confirmed onchain!"
-            : "Vault recovered and active!"
-        );
-        await refreshDashboard();
-      } else if (action === "attest") {
-        notify("Submitting guardian attestation...", "pending");
-        if (isConnected && numericId) {
-          try {
-            await attestVault(numericId);
-          } catch (e) {
-            console.warn("Contract attest fallback:", e.message);
-          }
-        }
-        try {
-          await apiRequest("patch", `/api/v1/vaults/${numericId}/sync`, {
-            status: "Approved",
-          });
-        } catch {}
-
-        notify("Guardian approval attested & release authorized!");
-        await refreshDashboard();
-      } else if (action === "claim") {
-        notify("Submitting beneficiary claim...", "pending");
-        if (isConnected && numericId) {
-          try {
-            await claimVault(numericId);
-          } catch (e) {
-            console.warn("Contract claim fallback:", e.message);
-          }
-        }
-        try {
-          await apiRequest("patch", `/api/v1/vaults/${numericId}/sync`, {
-            status: "Claimed",
-          });
-        } catch {}
-
-        const claimedVault = { ...vault, status: "Claimed" };
-        notify("Inheritance claimed! Opening secret viewer...");
-        await refreshDashboard();
-        setSecretVault(claimedVault);
-      } else if (action === "cancel") {
-        notify("Cancelling vault...", "pending");
-        try {
-          await apiRequest("patch", `/api/v1/vaults/${numericId}/sync`, {
-            status: "Cancelled",
-          });
-        } catch {}
-        notify("Vault cancelled successfully", "confirmed");
-        await refreshDashboard();
+      } catch (txErr) {
+        console.error("Heartbeat transaction failed on blockchain:", txErr);
+        notify(txErr?.message || "Transaction failed on blockchain.", "failed");
+        return;
       }
-    } catch (err) {
-      console.error("Action error:", err);
-      notify(err.message || "Action failed", "failed");
+
+      // 2. Blockchain action is CONFIRMED — notify user immediately
+      notify("Transaction confirmed on-chain!", "success");
+
+      // Optimistically update local vault state
+      const nowIso = new Date().toISOString();
+      applyOptimisticUpdate(numericId, {
+        status: "Active",
+        lastKnownHeartbeat: nowIso,
+      });
+
+      // 3. Attempt DB sync independently without catching/aborting on-chain success
+      try {
+        await apiRequest("patch", `/api/v1/vaults/${numericId}/sync`, {
+          status: "Active",
+          lastKnownHeartbeat: nowIso,
+        });
+        await refreshDashboard();
+      } catch (syncErr) {
+        console.warn("MongoDB indexing delayed/failed:", syncErr);
+        notify("Blockchain updated successfully. Database index sync pending.", "warning");
+      }
+    } else if (action === "attest") {
+      // 1. Execute smart contract action and await receipt
+      notify("Submitting guardian attestation on-chain...", "pending");
+      let receipt;
+      try {
+        const res = await attestVault(numericId);
+        receipt = res?.receipt;
+        if (!receipt || receipt.status !== 1) {
+          throw new Error("Transaction failed on blockchain.");
+        }
+      } catch (txErr) {
+        console.error("Guardian attestation transaction failed on blockchain:", txErr);
+        notify(txErr?.message || "Transaction failed on blockchain.", "failed");
+        return;
+      }
+
+      // 2. Fetch actual on-chain state via contract.getVault(numericId)
+      // NEVER infer new approvalsCount or status from MongoDB state
+      let onchainVault = null;
+      try {
+        onchainVault = await getVault(numericId);
+      } catch (queryErr) {
+        console.warn("Could not query on-chain status after attest:", queryErr?.message || queryErr);
+      }
+
+      if (onchainVault) {
+        const STATUS_MAP = ["Active", "InGracePeriod", "Approved", "Claimed", "Cancelled"];
+        const onchainStatus = STATUS_MAP[Number(onchainVault.status)] || "InGracePeriod";
+        const onchainApprovals = Number(onchainVault.approvalsCount);
+
+        // Update local state strictly using actual verified on-chain values
+        applyOptimisticUpdate(numericId, {
+          status: onchainStatus,
+          approvalsCount: onchainApprovals,
+          guardians: (vault.guardians || []).map((g) =>
+            g.address.toLowerCase() === (account || "").toLowerCase()
+              ? { ...g, hasApproved: true }
+              : g
+          ),
+        });
+
+        notify("Transaction confirmed on-chain!", "success");
+
+        // 3. Attempt DB sync independently without catching/aborting on-chain success
+        try {
+          await apiRequest("patch", `/api/v1/vaults/${numericId}/sync`, {
+            status: onchainStatus,
+            approvalsCount: onchainApprovals,
+          });
+          await refreshDashboard();
+        } catch (syncErr) {
+          console.warn("MongoDB indexing delayed/failed:", syncErr);
+          notify("Blockchain updated successfully. Database index sync pending.", "warning");
+        }
+      } else {
+        // Post-transaction blockchain read failed:
+        // Do NOT calculate approvalsCount from MongoDB, do NOT infer status. Keep last known state.
+        notify(
+          "Transaction confirmed on-chain! Latest vault state could not be read from blockchain. State sync pending.",
+          "warning"
+        );
+
+        // Attempt background sync/retry with backend indexer
+        try {
+          await apiRequest("patch", `/api/v1/vaults/${numericId}/sync`, {});
+          await refreshDashboard();
+        } catch (syncErr) {
+          console.warn("MongoDB indexing delayed/failed after post-attest read failure:", syncErr);
+        }
+      }
+    } else if (action === "claim") {
+      // 1. Execute smart contract action and await receipt
+      notify("Submitting beneficiary claim on-chain...", "pending");
+      let receipt;
+      try {
+        const res = await claimVault(numericId);
+        receipt = res?.receipt;
+        if (!receipt || receipt.status !== 1) {
+          throw new Error("Transaction failed on blockchain.");
+        }
+      } catch (txErr) {
+        console.error("Claim transaction failed on blockchain:", txErr);
+        notify(txErr?.message || "Transaction failed on blockchain.", "failed");
+        return;
+      }
+
+      // 2. Blockchain action is CONFIRMED — notify user immediately
+      notify("Transaction confirmed on-chain!", "success");
+
+      // Optimistically update local vault state and open secret payload viewer
+      const claimedVault = { ...vault, status: "Claimed" };
+      applyOptimisticUpdate(numericId, { status: "Claimed" });
+      setSecretVault(claimedVault);
+
+      // 3. Attempt DB sync independently without catching/aborting on-chain success
+      try {
+        await apiRequest("patch", `/api/v1/vaults/${numericId}/sync`, {
+          status: "Claimed",
+        });
+        await refreshDashboard();
+      } catch (syncErr) {
+        console.warn("MongoDB indexing delayed/failed:", syncErr);
+        notify("Blockchain updated successfully. Database index sync pending.", "warning");
+      }
+    } else if (action === "cancel") {
+      // 1. Execute smart contract action and await receipt
+      notify("Initiating on-chain vault cancellation...", "pending");
+      let receipt;
+      try {
+        const res = await cancelVault(numericId);
+        receipt = res?.receipt;
+        if (!receipt || receipt.status !== 1) {
+          throw new Error("Transaction failed on blockchain.");
+        }
+      } catch (txErr) {
+        console.error("Cancellation transaction failed on blockchain:", txErr);
+        notify(txErr?.message || "Transaction failed on blockchain.", "failed");
+        return;
+      }
+
+      // 2. Blockchain action is CONFIRMED — notify user immediately
+      notify("Transaction confirmed on-chain!", "success");
+
+      // Optimistically update local vault state
+      applyOptimisticUpdate(numericId, { status: "Cancelled" });
+
+      // 3. Attempt DB sync independently without catching/aborting on-chain success
+      try {
+        await apiRequest("patch", `/api/v1/vaults/${numericId}/sync`, {
+          status: "Cancelled",
+        });
+        await refreshDashboard();
+      } catch (syncErr) {
+        console.warn("MongoDB indexing delayed/failed:", syncErr);
+        notify("Blockchain updated successfully. Database index sync pending.", "warning");
+      }
     }
   }
 
@@ -422,6 +557,7 @@ export default function App() {
                 vault={vault}
                 onAction={handleAction}
                 isTransacting={isTransacting}
+                account={account}
               />
             ))
           ) : dashboardLoading ? (

@@ -1,6 +1,7 @@
 import { VaultRecord } from '../models/VaultRecord.js';
 import { isDBConnected } from '../config/db.js';
 import storageService from '../services/storageService.js';
+import { fetchOnchainVault, verifyTxHashOnchain } from '../services/chainService.js';
 
 // In-memory store fallback when MongoDB is not connected
 const mockVaultStore = new Map();
@@ -88,6 +89,7 @@ export const indexVault = async (req, res) => {
       heartbeatInterval,
       lastKnownHeartbeat,
       status,
+      txHash,
     } = req.body;
 
     if (vaultId === undefined || vaultId === null || !ownerAddress || !beneficiaryAddress || !ipfsHash) {
@@ -97,40 +99,159 @@ export const indexVault = async (req, res) => {
       });
     }
 
-    const normalizedGuardians = Array.isArray(guardians)
-      ? guardians.map((g) => (typeof g === 'string' ? g.toLowerCase().trim() : g))
-      : [];
+    const numericId = Number(vaultId);
+    if (isNaN(numericId) || numericId <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid vaultId: must be a positive integer',
+      });
+    }
+
+    // 1. Fetch the actual vault from the configured HeirloomVault smart contract
+    const onchainResult = await fetchOnchainVault(numericId);
+    if (!onchainResult.success || !onchainResult.data) {
+      return res.status(404).json({
+        success: false,
+        error: `Vault #${numericId} does not exist on blockchain: ${onchainResult.error || 'VaultNotFound'}`,
+      });
+    }
+
+    const onchain = onchainResult.data;
+
+    // 2. Verify supplied metadata against actual on-chain vault
+    // Normalize Ethereum addresses before comparison so checksum/case differences do not cause false mismatches.
+    const normOwner = ownerAddress.toLowerCase().trim();
+    const normBeneficiary = beneficiaryAddress.toLowerCase().trim();
+
+    if (onchain.owner !== normOwner) {
+      return res.status(400).json({
+        success: false,
+        error: `Metadata mismatch for ownerAddress: client provided ${ownerAddress}, but on-chain owner is ${onchain.owner}`,
+      });
+    }
+
+    if (onchain.beneficiary !== normBeneficiary) {
+      return res.status(400).json({
+        success: false,
+        error: `Metadata mismatch for beneficiaryAddress: client provided ${beneficiaryAddress}, but on-chain beneficiary is ${onchain.beneficiary}`,
+      });
+    }
+
+    if (guardianThreshold !== undefined && guardianThreshold !== null) {
+      if (Number(guardianThreshold) !== onchain.guardianThreshold) {
+        return res.status(400).json({
+          success: false,
+          error: `Metadata mismatch for guardianThreshold: client provided ${guardianThreshold}, but on-chain threshold is ${onchain.guardianThreshold}`,
+        });
+      }
+    }
+
+    if (guardians !== undefined && guardians !== null) {
+      const clientGuardians = (Array.isArray(guardians) ? guardians : [])
+        .map((g) => (typeof g === 'string' ? g.toLowerCase().trim() : ''))
+        .filter(Boolean);
+      const onchainGuardians = onchain.guardians || [];
+
+      if (clientGuardians.length !== onchainGuardians.length) {
+        return res.status(400).json({
+          success: false,
+          error: `Metadata mismatch for guardians: client provided ${clientGuardians.length} guardians, but on-chain vault has ${onchainGuardians.length}`,
+        });
+      }
+
+      const onchainSet = new Set(onchainGuardians);
+      const allGuardiansMatch = clientGuardians.every((g) => onchainSet.has(g));
+      if (!allGuardiansMatch) {
+        return res.status(400).json({
+          success: false,
+          error: 'Metadata mismatch for guardians: provided guardian addresses do not match on-chain guardians',
+        });
+      }
+    }
+
+    if (heartbeatInterval !== undefined && heartbeatInterval !== null) {
+      if (Number(heartbeatInterval) !== onchain.heartbeatInterval) {
+        return res.status(400).json({
+          success: false,
+          error: `Metadata mismatch for heartbeatInterval: client provided ${heartbeatInterval}, but on-chain interval is ${onchain.heartbeatInterval}`,
+        });
+      }
+    }
+
+    if (ipfsHash !== undefined && ipfsHash !== null) {
+      if (ipfsHash.trim() !== onchain.ipfsHash.trim()) {
+        return res.status(400).json({
+          success: false,
+          error: `Metadata mismatch for ipfsHash: client provided ${ipfsHash}, but on-chain ipfsHash is ${onchain.ipfsHash}`,
+        });
+      }
+    }
+
+    if (status !== undefined && status !== null) {
+      if (status !== onchain.status) {
+        return res.status(400).json({
+          success: false,
+          error: `Metadata mismatch for status: client provided ${status}, but on-chain status is ${onchain.status}`,
+        });
+      }
+    }
+
+    // 3. Verify txHash if provided - do not blindly trust client-supplied txHash
+    let verifiedTxHash = undefined;
+    if (txHash && typeof txHash === 'string') {
+      const txCheck = await verifyTxHashOnchain(txHash);
+      if (txCheck.valid) {
+        verifiedTxHash = txHash;
+      } else {
+        console.warn(`[Index Warning] Unverified client txHash ignored for Vault #${numericId}: ${txCheck.reason}`);
+      }
+    }
+
+    // Check existing vault to preserve existing trusted txHash
+    let existingVault = null;
+    if (isDBConnected()) {
+      existingVault = await VaultRecord.findOne({ vaultId: numericId });
+    } else {
+      existingVault = mockVaultStore.get(numericId);
+    }
+
+    const finalTxHash = existingVault?.txHash || verifiedTxHash;
 
     const vaultData = {
-      vaultId: Number(vaultId),
-      ownerAddress: ownerAddress.toLowerCase().trim(),
-      beneficiaryAddress: beneficiaryAddress.toLowerCase().trim(),
-      guardians: normalizedGuardians,
-      guardianThreshold: guardianThreshold ? Number(guardianThreshold) : 1,
+      vaultId: numericId,
+      ownerAddress: onchain.owner,
+      beneficiaryAddress: onchain.beneficiary,
+      guardians: onchain.guardians,
+      guardianThreshold: onchain.guardianThreshold,
+      approvalsCount: onchain.approvalsCount,
       title: title || 'Digital Inheritance Vault',
       description: description || '',
-      ipfsHash: ipfsHash.trim(),
-      heartbeatInterval: heartbeatInterval ? Number(heartbeatInterval) : 180,
-      lastKnownHeartbeat: lastKnownHeartbeat ? new Date(lastKnownHeartbeat) : new Date(),
-      status: status || 'Active',
+      ipfsHash: onchain.ipfsHash,
+      heartbeatInterval: onchain.heartbeatInterval,
+      lastKnownHeartbeat: onchain.lastHeartbeat || (lastKnownHeartbeat ? new Date(lastKnownHeartbeat) : new Date()),
+      status: onchain.status,
       updatedAt: new Date(),
     };
+
+    if (finalTxHash) {
+      vaultData.txHash = finalTxHash;
+    }
 
     let savedVault;
 
     if (isDBConnected()) {
       savedVault = await VaultRecord.findOneAndUpdate(
-        { vaultId: Number(vaultId) },
+        { vaultId: numericId },
         { $set: vaultData },
         { upsert: true, new: true, setDefaultsOnInsert: true }
       );
     } else {
       savedVault = {
         ...vaultData,
-        createdAt: mockVaultStore.get(Number(vaultId))?.createdAt || new Date(),
-        _id: `mock-${vaultId}`,
+        createdAt: existingVault?.createdAt || new Date(),
+        _id: existingVault?._id || `mock-${numericId}`,
       };
-      mockVaultStore.set(Number(vaultId), savedVault);
+      mockVaultStore.set(numericId, savedVault);
     }
 
     return res.status(200).json({
@@ -239,7 +360,7 @@ export const getVaultById = async (req, res) => {
 
 /**
  * @route PATCH /api/v1/vaults/:vaultId/sync
- * @desc Synchronize/update vault status, heartbeat, or approvals count
+ * @desc Synchronize/update vault status, heartbeat, or approvals count strictly from verified on-chain state
  */
 export const syncVaultState = async (req, res) => {
   try {
@@ -253,37 +374,78 @@ export const syncVaultState = async (req, res) => {
       });
     }
 
-    const updates = { ...req.body, updatedAt: new Date() };
-
-    if (updates.lastKnownHeartbeat) {
-      updates.lastKnownHeartbeat = new Date(updates.lastKnownHeartbeat);
-    }
-
-    let updatedVault;
-
+    // 1. Fetch current vault from DB or mock store
+    let existingVault = null;
     if (isDBConnected()) {
-      updatedVault = await VaultRecord.findOneAndUpdate(
-        { vaultId: numericId },
-        { $set: updates },
-        { new: true }
-      );
+      existingVault = await VaultRecord.findOne({ vaultId: numericId });
     } else {
-      const existing = mockVaultStore.get(numericId);
-      if (existing) {
-        updatedVault = { ...existing, ...updates };
-        mockVaultStore.set(numericId, updatedVault);
-      }
+      existingVault = mockVaultStore.get(numericId);
     }
 
-    if (!updatedVault) {
+    if (!existingVault) {
       return res.status(404).json({
         success: false,
         error: `Vault #${vaultId} not found for sync update`,
       });
     }
 
+    // 2. Query actual verified on-chain state from smart contract
+    // Strict requirement: ignore x-contract-address header and body contractAddress injection
+    const onchainResult = await fetchOnchainVault(numericId);
+
+    if (!onchainResult.success || !onchainResult.data) {
+      console.warn(
+        `[Sync Rejection] On-chain verification failed for Vault #${numericId}: ${onchainResult.error}`
+      );
+      return res.status(503).json({
+        success: false,
+        error: 'Blockchain verification unavailable. State sync rejected.',
+      });
+    }
+
+    // 3. Update ONLY with values directly retrieved from on-chain read call
+    const onchain = onchainResult.data;
+    const safeUpdates = {
+      status: onchain.status,
+      approvalsCount: onchain.approvalsCount,
+      updatedAt: new Date(),
+    };
+
+    if (onchain.lastHeartbeat && onchain.lastHeartbeat.getTime() > 0) {
+      safeUpdates.lastKnownHeartbeat = onchain.lastHeartbeat;
+    }
+
+    // 4. Do not treat client-provided txHash as authoritative.
+    // If the backend cannot independently verify a txHash, do not overwrite an existing trusted txHash with a client-supplied arbitrary value.
+    // Preserve the existing verified txHash when available.
+    if (existingVault.txHash) {
+      safeUpdates.txHash = existingVault.txHash;
+    } else if (req.body.txHash && typeof req.body.txHash === 'string') {
+      const txCheck = await verifyTxHashOnchain(req.body.txHash);
+      if (txCheck.valid) {
+        safeUpdates.txHash = req.body.txHash;
+      } else {
+        console.warn(
+          `[Sync Warning] Client-supplied txHash rejected for Vault #${numericId}: ${txCheck.reason}`
+        );
+      }
+    }
+
+    let updatedVault;
+    if (isDBConnected()) {
+      updatedVault = await VaultRecord.findOneAndUpdate(
+        { vaultId: numericId },
+        { $set: safeUpdates },
+        { returnDocument: 'after' }
+      );
+    } else {
+      updatedVault = { ...existingVault, ...safeUpdates };
+      mockVaultStore.set(numericId, updatedVault);
+    }
+
     return res.status(200).json({
       success: true,
+      message: `Vault #${numericId} synchronized directly from verified on-chain state (${onchain.status})`,
       data: updatedVault,
     });
   } catch (error) {
@@ -294,6 +456,8 @@ export const syncVaultState = async (req, res) => {
     });
   }
 };
+
+
 
 /**
  * @route GET /api/v1/vaults

@@ -269,6 +269,32 @@ export const useHeirloomVault = () => {
   );
 
   /**
+   * Vault owner cancels an Active or InGracePeriod vault on-chain
+   */
+  const cancelVault = useCallback(
+    async (vaultId) => {
+      setIsTransacting(true);
+      setError(null);
+      setTxHash(null);
+
+      try {
+        const contract = getContract(true);
+        const tx = await contract.cancelVault(BigInt(vaultId));
+        setTxHash(tx.hash);
+        const receipt = await tx.wait();
+        return { receipt, txHash: tx.hash };
+      } catch (err) {
+        const parsedMessage = parseContractError(err, new ethers.Interface(CONTRACT_ABI));
+        setError(parsedMessage);
+        throw new Error(parsedMessage);
+      } finally {
+        setIsTransacting(false);
+      }
+    },
+    [getContract]
+  );
+
+  /**
    * Read-only view helpers
    */
   const getVault = useCallback(
@@ -314,6 +340,7 @@ export const useHeirloomVault = () => {
     triggerInactivity,
     attestVault,
     claimVault,
+    cancelVault,
     getVault,
     getGuardians,
     isGuardian,

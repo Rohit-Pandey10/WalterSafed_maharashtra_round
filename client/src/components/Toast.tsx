@@ -1,4 +1,4 @@
-import { AlertCircle, CheckCircle2, LoaderCircle } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, LoaderCircle } from "lucide-react";
 import type { ToastState } from "../types";
 
 export default function Toast({ toast }: { toast: ToastState | null }) {
@@ -6,8 +6,10 @@ export default function Toast({ toast }: { toast: ToastState | null }) {
   const config = {
     pending: { icon: LoaderCircle, color: "text-indigo-600", className: "animate-spin" },
     confirmed: { icon: CheckCircle2, color: "text-emerald-600", className: "" },
+    success: { icon: CheckCircle2, color: "text-emerald-600", className: "" },
+    warning: { icon: AlertTriangle, color: "text-amber-500", className: "" },
     failed: { icon: AlertCircle, color: "text-rose-600", className: "" },
-  }[toast.type];
+  }[toast.type] || { icon: CheckCircle2, color: "text-emerald-600", className: "" };
   const Icon = config.icon;
 
   return (
